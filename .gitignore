@@ -10,4 +10,6 @@ compile_commands.json
 CTestTestfile.cmake
 _deps
 CMakeUserPresets.json
-buildg
+lab2/build
+lab3/build
+*json
