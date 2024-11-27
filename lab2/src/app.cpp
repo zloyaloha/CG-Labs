@@ -15,15 +15,10 @@ CubeApp::CubeApp()
 }
 
 void CubeApp::setPerspective(float fov, float aspect, float zNear, float zFar) {
-    float f = 1.0f / tan(fov * 0.5f * 3.14159265f / 180.0f);
-    float perspective[16] = {
-        f / aspect, 0.0f,  0.0f,                          0.0f,
-        0.0f,       f,     0.0f,                          0.0f,
-        0.0f,       0.0f,  (zFar + zNear) / (zNear - zFar), -1.0f,
-        0.0f,       0.0f,  (2.0f * zFar * zNear) / (zNear - zFar), 0.0f
-    };
     glMatrixMode(GL_PROJECTION);
-    glLoadMatrixf(perspective);
+    glLoadIdentity();
+    gluPerspective(45.0, 800.0 / 600.0, 0.1, 100.0); // Угол 45°, соотношение 4:3, ближняя плоскость 0.1, дальняя 100.0
+    glMatrixMode(GL_MODELVIEW);
 }
 
 void CubeApp::run() {

@@ -16,6 +16,7 @@ set(SOURCES
 )
 
 # Указываем зависимости: SFML и OpenGL
+find_package(glfw3)
 find_package(SFML 2.5 COMPONENTS window system REQUIRED)
 find_package(OpenGL REQUIRED)
 
@@ -23,4 +24,4 @@ find_package(OpenGL REQUIRED)
 add_executable(${PROJECT_NAME} ${SOURCES})
 
 # Линкуем SFML и OpenGL
-target_link_libraries(${PROJECT_NAME} sfml-window sfml-system OpenGL::GL)
+target_link_libraries(${PROJECT_NAME} sfml-window sfml-system OpenGL::GL OpenGL::GLU)

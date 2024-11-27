@@ -29,7 +29,7 @@ void Object3D::draw() {
         {0.0f, 1.0f, 0.0f},
         {0.0f, -1.0f, 0.0f}
     };
-
+    // std::cout << lights[0].position.x << ' ' << lights[1].position.y << ' ' << lights[2].position.z << std::endl;
     glm::mat4 rotationMatrix = glm::rotate(glm::mat4(1.0f), glm::radians(_angleX), glm::vec3(1.0f, 0.0f, 0.0f));
     rotationMatrix = glm::rotate(rotationMatrix, glm::radians(_angleY), glm::vec3(0.0f, 1.0f, 0.0f));
     rotationMatrix = glm::rotate(rotationMatrix, glm::radians(_angleZ), glm::vec3(0.0f, 0.0f, 1.0f));
@@ -39,12 +39,12 @@ void Object3D::draw() {
 
     for (int i = 0; i < 6; i++) {
         glm::vec3 totalIntensity = {0, 0, 0};
+        glm::vec3 rotatedNormal = glm::normalize(glm::mat3(rotationMatrix) * normals[i]);
         for (const auto& light : lights) {
 
-            glm::vec4 lightPosition = rotationMatrix * glm::vec4(light.position, 1.0f);
-            glm::vec3 lightDir = glm::normalize(glm::vec3(lightPosition) - vertices[i][0]);
+            glm::vec3 lightDir = glm::normalize(glm::vec3(light.position) - vertices[i][0]);
 
-            float dotProduct = glm::dot(glm::normalize(normals[i]), lightDir);
+            float dotProduct = glm::dot(glm::normalize(rotatedNormal), lightDir);
             float intensity = std::max(0.0f, dotProduct);
             totalIntensity += intensity * light.color;
         }
@@ -54,7 +54,8 @@ void Object3D::draw() {
 
         glBegin(GL_QUADS);
         for (int j = 0; j < 4; j++) {
-            glVertex3f(vertices[i][j].x, vertices[i][j].y, vertices[i][j].z);
+            glm::vec3 rotatedVertex = glm::vec3(rotationMatrix * glm::vec4(vertices[i][j], 1.0f));
+            glVertex3f(rotatedVertex.x, rotatedVertex.y, rotatedVertex.z);
         }
         glEnd();
     }
