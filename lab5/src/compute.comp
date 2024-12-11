@@ -1,0 +1,290 @@
+#version 430
+layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
+layout(rgba32f, binding = 0) uniform image2D img_output;
+
+struct Material {
+    vec3 ambient;
+    vec3 diffuse;
+    vec3 specular;
+    float shininess;
+    float reflection;
+};
+
+struct Sphere {
+    vec3 center;  // Центр сферы
+    float radius; // Радиус сферы
+    Material material;   // Цвет сферы
+};
+
+uniform Sphere spheres[255];
+
+struct Plane {
+    vec3 point;   // Точка на плоскости
+    vec3 normal;  // Нормаль плоскости
+    Material material; // Материал плоскости
+};
+
+struct Light {
+    vec3 position;
+    vec3 color;
+};
+
+uniform vec3 uCameraPos;
+uniform Light uLight;
+uniform Plane uPlane;
+uniform int spheresCount;
+// uniform float uSphereReflection;
+// uniform float uPlaneReflection;
+
+const int MAX_DEPTH = 5;
+
+struct Ray {
+    vec3 origin;
+    vec3 direction;
+};
+
+vec3 reflectRay(Ray ray, vec3 normal, vec3 hitPoint) {
+    return reflect(ray.direction, normal); // Отражение направления луча от поверхности
+}
+
+bool intersectSphere(Ray ray, Sphere sphere, out float t) {
+    vec3 oc = ray.origin - sphere.center;
+    float a = dot(ray.direction, ray.direction);
+    float b = 2.0 * dot(oc, ray.direction);
+    float c = dot(oc, oc) - sphere.radius * sphere.radius;
+    float discriminant = b * b - 4.0 * a * c;
+    if (discriminant < 0.0)
+        return false;
+    else {
+        float sqrtDisc = sqrt(discriminant);
+        float t0 = (-b - sqrtDisc) / (2.0 * a);
+        float t1 = (-b + sqrtDisc) / (2.0 * a);
+        t = (t0 < t1) ? t0 : t1;
+        if (t < 0.0) {
+            t = (t0 > t1) ? t0 : t1;
+            if (t < 0.0)
+                return false;
+        }
+        return true;
+    }
+}
+
+bool intersectPlane(Ray ray, Plane plane, out float t) {
+    float denominator = dot(plane.normal, ray.direction);
+    if (abs(denominator) < 1e-6) {
+        return false; // Луч параллелен плоскости
+    }
+
+    t = dot(plane.point - ray.origin, plane.normal) / denominator;
+    return (t >= 0.0); // Пересечение вперед по лучу
+}
+
+vec2 normalizeCoords(vec2 fragCoord, vec2 screenSize) {
+    return (fragCoord / screenSize) * 2.0 - 1.0;
+}
+
+Ray generateRay(vec2 fragCoord, vec3 cameraPos, vec3 cameraDir, vec3 cameraRight, vec3 cameraUp, float fov, float aspectRatio) {
+    float x = fragCoord.x;
+    float y = fragCoord.y;
+
+    float angle = tan(radians(fov) / 2.0);
+    vec3 rayDir = normalize(cameraDir + cameraRight * (x * angle * aspectRatio) + cameraUp * (y * angle));
+
+    Ray r;
+
+    r.origin = cameraPos;
+    r.direction = rayDir;
+    return r;
+}
+
+vec3 calculateAmbient(vec3 materialColor, vec3 lightColor, float ambientStrength) {
+    return ambientStrength * lightColor * materialColor;
+}
+
+vec3 calculateDiffuse(vec3 normal, vec3 lightDir, vec3 lightColor, vec3 materialColor) {
+    float diff = max(dot(normal, lightDir), 0.0);
+    return diff * lightColor * materialColor;
+}
+
+vec3 calculateSpecular(vec3 viewDir, vec3 reflectDir, vec3 lightColor, float shininess, float specularStrength) {
+    float spec = pow(max(dot(viewDir, reflectDir), 0.0), shininess);
+    return specularStrength * spec * lightColor;
+}
+
+vec3 cameraDir = normalize(vec3(0.0, 0.0, -1.0));
+vec3 cameraRight = normalize(cross(vec3(0.0, 1.0, 0.0), cameraDir));
+vec3 cameraUp = normalize(cross(cameraDir, cameraRight));
+
+float uFOV = 45.0;
+float uAspectRatio = float(1080) / float(720);
+
+vec3 calculateLighting(Ray ray, vec3 normal, vec3 lightDir, vec3 lightColor, vec3 materialColor, Material mat) {
+    // Амбиентное освещение
+    vec3 ambient = mat.ambient * lightColor;
+
+    // Диффузное освещение
+    float diff = max(dot(normal, lightDir), 0.0);
+    vec3 diffuse = diff * mat.diffuse * lightColor;
+
+    // Спекулярное освещение
+    vec3 viewDir = normalize(uCameraPos - ray.origin); // Направление к камере
+    vec3 reflectDir = reflect(-lightDir, normal);
+    float spec = pow(max(dot(viewDir, reflectDir), 0.0), mat.shininess);
+    vec3 specular = mat.specular * spec * lightColor;
+
+    return ambient + diffuse + specular;
+}
+
+void main() {
+    ivec2 pixel_coords = ivec2(gl_GlobalInvocationID.xy);
+    vec2 screenSize = vec2(1080, 720);
+    vec2 normalizedCoords = normalizeCoords(vec2(pixel_coords.x, pixel_coords.y), screenSize);
+
+    vec4 color = vec4(1.0, 1.0, 1.0, 1.0);
+    Ray ray = generateRay(normalizedCoords, uCameraPos, cameraDir, cameraRight, cameraUp, uFOV, uAspectRatio);
+
+    float tMin = 1e20;
+    for (int i = 0; i < spheresCount; i++) {
+        float t;
+        if (intersectSphere(ray, spheres[i], t)) {
+            if (t < tMin) {
+                tMin = t;
+            }
+            vec3 hitPoint = ray.origin + t * ray.direction;
+            vec3 normal = normalize(hitPoint - spheres[i].center);
+
+            Material mat = spheres[i].material;
+
+            // Рассчитываем свет для текущей сферы
+            vec3 lightDir = normalize(uLight.position - hitPoint);
+            vec3 viewDir = normalize(uCameraPos - hitPoint);
+            vec3 reflectDir = reflect(-lightDir, normal);
+
+            vec3 ambient = calculateAmbient(mat.ambient, uLight.color, 0.1);
+            vec3 diffuse = calculateDiffuse(normal, lightDir, uLight.color, mat.diffuse);
+            vec3 specular = calculateSpecular(viewDir, reflectDir, uLight.color, mat.shininess, 0.5);
+
+            color = vec4(ambient + diffuse + specular, 1.0);
+
+            if (mat.reflection > 0.0) {
+                Ray reflectedRay;
+                reflectedRay.origin = hitPoint + normal * 0.001; // Сдвигаем точку пересечения
+                reflectedRay.direction = reflectRay(ray, normal, hitPoint);
+
+                // Имитация рекурсии через цикл
+                vec3 reflectionColor = vec3(0.0);
+                Ray currentRay = reflectedRay;
+                for (int depth = 0; depth < 3; depth++) {
+                    bool hit = false;
+                    for (int j = 0; j < spheresCount; j++) {
+                        float t;
+                        if (intersectSphere(currentRay, spheres[j], t)) {
+                            hit = true;
+                            if (t < tMin) {
+                                tMin = t;
+                            }
+                            vec3 hitPoint = currentRay.origin + t * currentRay.direction;
+                            vec3 normal = normalize(hitPoint - spheres[j].center);
+                            Material mat = spheres[j].material;
+
+                            // Рассчитываем свет для зеркального объекта
+                            vec3 lightDir = normalize(uLight.position - hitPoint);
+                            vec3 viewDir = normalize(uCameraPos - hitPoint);
+                            vec3 reflectDir = reflect(-lightDir, normal);
+
+                            vec3 ambient = calculateAmbient(mat.ambient, uLight.color, 0.1);
+                            vec3 diffuse = calculateDiffuse(normal, lightDir, uLight.color, mat.diffuse);
+                            vec3 specular = calculateSpecular(viewDir, reflectDir, uLight.color, mat.shininess, 0.5);
+
+                            // Смешиваем освещение объекта и его отражение
+                            reflectionColor = ambient + diffuse + specular;
+
+                            if (mat.reflection > 0.0) {
+                                currentRay.origin = hitPoint + normal * 0.001; // Сдвигаем точку пересечения
+                                currentRay.direction = reflectRay(currentRay, normal, hitPoint);
+                            }
+                            break;
+                        }
+                    }
+                    if (!hit) break;
+                }
+
+                color.rgb = mix(color.rgb, reflectionColor, mat.reflection);
+            }
+        }
+    }
+
+    vec3 fixedNormal = vec3(0.0, 1.0, 0.0); // Нормаль вверх по оси Y
+    vec3 lightDir = normalize(uLight.position - ray.origin);
+    float tPlane;
+    float t;
+    if (intersectPlane(ray, uPlane, t)) {
+        if (t < tMin) {
+            tMin = t;
+        }
+        vec3 hitPoint = ray.origin + t * ray.direction;
+        vec3 normal = normalize(uPlane.normal);
+
+        Material mat = uPlane.material;
+
+        // Рассчитываем свет для текущей сферы
+        vec3 lightDir = normalize(uLight.position - hitPoint);
+        vec3 viewDir = normalize(uCameraPos - hitPoint);
+        vec3 reflectDir = reflect(-lightDir, normal);
+
+        vec3 ambient = calculateAmbient(mat.ambient, uLight.color, 0.1);
+        vec3 diffuse = calculateDiffuse(normal, lightDir, uLight.color, mat.diffuse);
+        vec3 specular = calculateSpecular(viewDir, reflectDir, uLight.color, mat.shininess, 0.5);
+
+        color = vec4(ambient + diffuse + specular, 1.0);
+
+        if (mat.reflection > 0.0) {
+            Ray reflectedRay;
+            reflectedRay.origin = hitPoint + normal * 0.001; // Сдвигаем точку пересечения
+            reflectedRay.direction = reflectRay(ray, normal, hitPoint);
+
+            // Имитация рекурсии через цикл
+            vec3 reflectionColor = vec3(0.0);
+            Ray currentRay = reflectedRay;
+            for (int depth = 0; depth < 3; depth++) {
+                bool hit = false;
+                for (int j = 0; j < spheresCount; j++) {
+                    float t;
+                    if (intersectSphere(currentRay, spheres[j], t)) {
+                        hit = true;
+                        if (t < tMin) {
+                            tMin = t;
+                        }
+                        vec3 hitPoint = currentRay.origin + t * currentRay.direction;
+                        vec3 normal = normalize(hitPoint - spheres[j].center);
+                        Material mat = spheres[j].material;
+
+                        // Рассчитываем свет для зеркального объекта
+                        vec3 lightDir = normalize(uLight.position - hitPoint);
+                        vec3 viewDir = normalize(uCameraPos - hitPoint);
+                        vec3 reflectDir = reflect(-lightDir, normal);
+
+                        vec3 ambient = calculateAmbient(mat.ambient, uLight.color, 0.1);
+                        vec3 diffuse = calculateDiffuse(normal, lightDir, uLight.color, mat.diffuse);
+                        vec3 specular = calculateSpecular(viewDir, reflectDir, uLight.color, mat.shininess, 0.5);
+
+                        // Смешиваем освещение объекта и его отражение
+                        reflectionColor = ambient + diffuse + specular;
+
+                        if (mat.reflection > 0.0) {
+                            currentRay.origin = hitPoint + normal * 0.001; // Сдвигаем точку пересечения
+                            currentRay.direction = reflectRay(currentRay, normal, hitPoint);
+                        }
+                        break;
+                    }
+                }
+                if (!hit) break;
+            }
+
+            color.rgb = mix(color.rgb, reflectionColor, mat.reflection);
+        }
+    }
+
+    imageStore(img_output, pixel_coords, color);
+}
+
